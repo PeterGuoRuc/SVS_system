@@ -322,6 +322,8 @@ class SVSCollator(object):
         length_mask = np.zeros((batch_size, self.max_len))
         semitone = np.zeros((batch_size, self.max_len))
 
+        filename_list = [batch[i]["filename"] for i in range(batch_size)]
+        flag_filter_list = [batch[i]["flag_filter"] for i in range(batch_size)]
         if self.db_joint:
             singer_id = [batch[i]["singer_id"] for i in range(batch_size)]
 
@@ -429,6 +431,8 @@ class SVSCollator(object):
                 mel,
                 singer_id,
                 semitone,
+                filename_list,
+                flag_filter_list
             )
         else:
             return (
@@ -443,6 +447,8 @@ class SVSCollator(object):
                 char_len_mask,
                 mel,
                 semitone,
+                filename_list,
+                flag_filter_list
             )
 
 
@@ -473,6 +479,8 @@ class SVSDataset(Dataset):
         semitone_max="D_6",
         phone_shift_size=-1,
         semitone_shift=False,
+        finetune_dbname="None",
+        filter_wav_path="None"
     ):
         """init."""
         self.align_root_path = align_root_path
@@ -504,13 +512,32 @@ class SVSDataset(Dataset):
             quality = None
         # get file_list
         self.filename_list = os.listdir(align_root_path)
-        # phone_list, beat_list, pitch_list, spectrogram_list = [], [], [], []
+        self.flag_filter_list = [0 for i in range(len(self.filename_list))]  # 0 - gt files, 1 - filtered augment files
+        if filter_wav_path != "None":
+            with open(filter_wav_path,"r") as f:
+                lines = f.readlines()
+                for line in lines:
+                    self.filename_list.append( line.strip() )
+                    self.flag_filter_list.append(1)
+
+        
+        # clean filename_list
         for filename in self.filename_list:
             if quality is None:
                 break
             if filename[-4:] != ".npy" or filename[:4] not in quality:
                 print("remove file {}".format(filename))
                 self.filename_list.remove(filename)
+        
+        # only return data of finetune_dbname(single dataset), with singer_id in __getitem__
+        if finetune_dbname != "None":
+            if finetune_dbname in ["hts", "jsut", "kiritan", "natsume", "pjs", "ofuton", "oniku"]:
+                self.filename_list = [filename for filename in self.filename_list if filename.split("_")[0] == finetune_dbname]
+                # print(self.filename_list)
+            else:
+                raise ValueError(
+                    "ValueError exception thrown, No such finetune_dbname: ", finetune_dbname
+                )
 
     def __len__(self):
         """len."""
@@ -518,7 +545,14 @@ class SVSDataset(Dataset):
 
     def __getitem__(self, i):
         """getitem."""
-        path = os.path.join(self.align_root_path, self.filename_list[i])
+        flag_filter = self.flag_filter_list[i]
+        if flag_filter:
+            filter_filename = self.filename_list[i].split("/")[-1][:-4]     # e.g. kiritan_00250002-3
+            filename = filter_filename.split("-")[0]
+        else:
+            filename = self.filename_list[i][:-4]
+
+        path = os.path.join(self.align_root_path, filename + ".npy")
         try:
             phone = np.load(path)
             # phone shift augment
@@ -529,40 +563,48 @@ class SVSDataset(Dataset):
             print("error path {}".format(path))
 
         if self.db_joint:
-            db_name = self.filename_list[i].split("_")[0]
-            if db_name == "hts":
-                singer_id = 0
-            elif db_name == "jsut":
-                singer_id = 1
-            elif db_name == "kiritan":
-                singer_id = 2
-            elif db_name == "natsume":
-                singer_id = 3
-            elif db_name == "pjs":
-                singer_id = 4
-            elif db_name == "ofuton":
-                singer_id = 5
-            elif db_name == "oniku":
-                singer_id = 6
+            if flag_filter:
+                singer_id = int(filter_filename.split("-")[1])
             else:
-                raise ValueError(
-                    "ValueError exception thrown, No such dataset: ", db_name
-                )
+                db_name = self.filename_list[i].split("_")[0]
+                if db_name == "hts":
+                    singer_id = 0
+                elif db_name == "jsut":
+                    singer_id = 1
+                elif db_name == "kiritan":
+                    singer_id = 2
+                elif db_name == "natsume":
+                    singer_id = 3
+                elif db_name == "pjs":
+                    singer_id = 4
+                elif db_name == "ofuton":
+                    singer_id = 5
+                elif db_name == "oniku":
+                    singer_id = 6
+                else:
+                    raise ValueError(
+                        "ValueError exception thrown, No such dataset: ", db_name
+                    )
 
             beat_path = os.path.join(
-                self.pitch_beat_root_path, self.filename_list[i][:-4] + "_beats.npy"
+                self.pitch_beat_root_path, filename + "_beats.npy"
             )
             beat_numpy = np.load(beat_path)
             beat_index = list(map(lambda x: int(x), beat_numpy))
             beat = np.zeros(len(phone))
             beat[beat_index] = 1
             pitch_path = os.path.join(
-                self.pitch_beat_root_path, self.filename_list[i][:-4] + "_pitch.npy"
+                self.pitch_beat_root_path, filename + "_pitch.npy"
             )
             pitch = np.load(pitch_path)
-            wav_path = os.path.join(
-                self.wav_root_path, self.filename_list[i][:-4] + ".wav"
-            )
+
+            if flag_filter:
+                wav_path = self.filename_list[i]
+            else:
+                wav_path = os.path.join(
+                    self.wav_root_path, filename + ".wav"
+                )
+
         else:
             # path is different between combine-db <-> single db
             beat_path = os.path.join(
@@ -647,6 +689,8 @@ class SVSDataset(Dataset):
                 "mel": mel,
                 "singer_id": singer_id,
                 "semitone": semitone,
+                "filename": self.filename_list[i][:-4],
+                "flag_filter": flag_filter
             }
         else:
             return {
@@ -658,4 +702,162 @@ class SVSDataset(Dataset):
                 "phase": phase,
                 "mel": mel,
                 "semitone": semitone,
+                "filename": self.filename_list[i][:-4],
+                "flag_filter": flag_filter
             }
+
+class SVSDataset_filter(Dataset):
+    """SVSDataset."""
+
+    def __init__(
+        self,
+        align_root_path,
+        pitch_beat_root_path,
+        wav_root_path,
+        char_max_len=80,
+        max_len=500,
+        sr=44100,
+        preemphasis=0.97,
+        nfft=2048,
+        frame_shift=0.03,
+        frame_length=0.06,
+        n_mels=80,
+        power=1.2,
+        max_db=100,
+        ref_db=20,
+        sing_quality="conf/sing_quality.csv",
+        standard=3,
+        Hz2semitone=False,
+        semitone_min="F_1",
+        semitone_max="D_6",
+    ):
+        """init."""
+        self.align_root_path = align_root_path
+        self.pitch_beat_root_path = pitch_beat_root_path
+        self.wav_root_path = wav_root_path
+        self.char_max_len = char_max_len
+        self.max_len = max_len
+        self.sr = sr
+        self.preemphasis = preemphasis
+        self.nfft = nfft
+        self.frame_shift = int(frame_shift * sr)
+        self.frame_length = int(frame_length * sr)
+        self.n_mels = n_mels
+        self.power = power
+        self.max_db = max_db
+        self.ref_db = ref_db
+        self.Hz2semitone = Hz2semitone
+        
+        if Hz2semitone:
+            self.semitone_list = _full_semitone_list(semitone_min, semitone_max)
+
+        if standard > 0:
+            print(standard)
+            quality = _load_sing_quality(sing_quality, standard)
+        else:
+            quality = None
+        # get file_list
+        self.filename_list = os.listdir(wav_root_path)
+        
+        # clean filename_list
+        for filename in self.filename_list:
+            if quality is None:
+                break
+            if filename[-4:] != ".npy" or filename[:4] not in quality:
+                print("remove file {}".format(filename))
+                self.filename_list.remove(filename)
+
+    def __len__(self):
+        """len."""
+        return len(self.filename_list)
+
+    def __getitem__(self, i):
+        """getitem."""
+        singer_id = int(self.filename_list[i].split("-")[1][:-4])
+        filename = self.filename_list[i].split("-")[0]
+
+        # logging.info(f"{filename}, {singer_id}")
+
+        path = os.path.join(self.align_root_path, filename + ".npy")
+        # logging.info(path)
+
+        try:
+            phone = np.load(path)
+        except Exception:
+            print("error path {}".format(path))
+
+        beat_path = os.path.join(
+            self.pitch_beat_root_path, filename + "_beats.npy"
+        )
+        beat_numpy = np.load(beat_path)
+        beat_index = list(map(lambda x: int(x), beat_numpy))
+        beat = np.zeros(len(phone))
+        beat[beat_index] = 1
+        pitch_path = os.path.join(
+            self.pitch_beat_root_path, filename + "_pitch.npy"
+        )
+        pitch = np.load(pitch_path)
+        wav_path = os.path.join(
+            self.wav_root_path, self.filename_list[i][:-4] + ".wav"
+        )
+
+        spectrogram, mel, phase = _get_spectrograms(
+            wav_path,
+            self.sr,
+            self.preemphasis,
+            self.nfft,
+            self.frame_shift,
+            self.frame_length,
+            self.max_db,
+            self.ref_db,
+            n_mels=self.n_mels,
+        )
+
+        # length check
+        if np.abs(len(phone) - np.shape(spectrogram)[0]) > 3:
+            logging.info("error file: %s" % self.filename_list[i])
+            logging.info(
+                "spectrum_size: {}, alignment_size: {}, "
+                "pitch_size: {}, beat_size: {}".format(
+                    np.shape(spectrogram)[0], len(phone), len(pitch), len(beat)
+                )
+            )
+        # assert np.abs(len(phone) - np.shape(spectrogram)[0]) <= 15
+        # for post condition
+        if len(phone.shape) > 1:
+            char, trimed_length = None, len(phone)
+        else:
+            char, trimed_length = _phone2char(phone[: self.max_len], self.char_max_len)
+        min_length = min(
+            len(phone), np.shape(spectrogram)[0], trimed_length, len(pitch), len(beat)
+        )
+        phone = phone[:min_length]
+        beat = beat[:min_length]
+        pitch = pitch[:min_length]
+        spectrogram = spectrogram[:min_length, :]
+        phase = phase[:min_length, :]
+
+        if mel is not None:
+            mel = mel[:min_length, :]
+
+        if self.Hz2semitone:
+            semitone = [self.semitone_list.index(_Hz2Semitone(f0)) for f0 in pitch]
+        else:
+            semitone = None
+
+        # print("char len: {}, phone len: {}, spectrom: {}"
+        # .format(len(char), len(phone), np.shape(spectrogram)[0]))
+        # logging.info(min_length)
+
+        return {
+            "phone": phone,
+            "beat": beat,
+            "pitch": pitch,
+            "spec": spectrogram,
+            "char": char,
+            "phase": phase,
+            "mel": mel,
+            "singer_id": singer_id,
+            "semitone": semitone,
+            "filename": self.filename_list[i][:-4],
+        }

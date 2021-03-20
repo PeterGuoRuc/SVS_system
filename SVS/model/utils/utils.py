@@ -55,6 +55,8 @@ def collect_stats(train_loader, args):
                 mel,
                 singer_id,
                 semitone,
+                filename_list,
+                flag_filter_list
             ) = data_step
         else:
             (
@@ -69,6 +71,8 @@ def collect_stats(train_loader, args):
                 char_len_list,
                 mel,
                 semitone,
+                filename_list,
+                flag_filter_list
             ) = data_step
         # print(f"spec.shape: {spec.shape},length.shape:
         # {length.shape}, mel.shape: {mel.shape}")
@@ -149,6 +153,8 @@ def train_one_epoch(
                 mel,
                 singer_id,
                 semitone,
+                filename_list,
+                flag_filter_list
             ) = data_step
 
             singer_id = np.array(singer_id).reshape(
@@ -172,6 +178,8 @@ def train_one_epoch(
                 char_len_list,
                 mel,
                 semitone,
+                filename_list,
+                flag_filter_list
             ) = data_step
         phone = phone.to(device)
         beat = beat.to(device)
@@ -269,26 +277,38 @@ def train_one_epoch(
             spec, _ = sepc_normalizer(spec, length)
             mel, _ = mel_normalizer(mel, length)
 
+        # flag_filter:  0 - gt files, 1 - filtered augment files
+        # weight:       1 - gt files, filter_weight - filtered augment files
+        weight = [args.filter_weight if flag_filter == 1 else 1 for flag_filter in flag_filter_list]
+        weight = torch.FloatTensor(weight).to(device).float()
+
         if args.model_type == "USTC_DAR":
             spec_loss = 0
         else:
-            spec_loss = criterion(output, spec, length_mask)
+            spec_loss = criterion(output, spec, length_mask, weight)
 
         if args.n_mels > 0:
-            mel_loss = criterion(output_mel, mel, length_mel_mask)
+            mel_loss = criterion(output_mel, mel, length_mel_mask, weight)
             if args.double_mel_loss:
-                double_mel_loss = criterion(output_mel2, mel, length_mel_mask)
+                double_mel_loss = criterion(output_mel2, mel, length_mel_mask, weight)
             else:
                 double_mel_loss = 0
         else:
             mel_loss = 0
             double_mel_loss = 0
+
         if args.vocoder_category == "wavernn":
             train_loss = mel_loss + double_mel_loss
         else:
             train_loss = mel_loss + double_mel_loss + spec_loss
         if args.perceptual_loss > 0:
             pe_loss = perceptual_entropy(output, real, imag)
+            
+            # print(f"weight: {weight}")
+            # print(f"flag_filter_list: {flag_filter_list}")
+            # print(f"spec_loss: {spec_loss}")
+
+            # quit()
             final_loss = (
                 args.perceptual_loss * pe_loss + (1 - args.perceptual_loss) * train_loss
             )
@@ -422,6 +442,8 @@ def validate(
                     mel,
                     singer_id,
                     semitone,
+                    filename_list,
+                    flag_filter_list
                 ) = data_step
 
                 singer_id = np.array(singer_id).reshape(
@@ -445,6 +467,8 @@ def validate(
                     char_len_list,
                     mel,
                     semitone,
+                    filename_list,
+                    flag_filter_list
                 ) = data_step
 
             phone = phone.to(device)
@@ -547,16 +571,21 @@ def validate(
                 spec, _ = sepc_normalizer(spec, length)
                 mel, _ = mel_normalizer(mel, length)
 
+            # flag_filter:  0 - gt files, 1 - filtered augment files
+            # weight:       1 - gt files, filter_weight - filtered augment files
+            weight = [args.filter_weight if flag_filter == 1 else 1 for flag_filter in flag_filter_list]
+            weight = torch.FloatTensor(weight).to(device).float()
+
             if args.model_type == "USTC_DAR":
                 spec_loss = 0
             else:
-                spec_loss = criterion(output, spec, length_mask)
+                spec_loss = criterion(output, spec, length_mask, weight)
 
             if args.n_mels > 0:
-                mel_loss = criterion(output_mel, mel, length_mel_mask)
+                mel_loss = criterion(output_mel, mel, length_mel_mask, weight)
 
                 if args.double_mel_loss:
-                    double_mel_loss = criterion(output_mel2, mel, length_mel_mask)
+                    double_mel_loss = criterion(output_mel2, mel, length_mel_mask, weight)
                 else:
                     double_mel_loss = 0
             else:
@@ -699,6 +728,8 @@ def train_one_epoch_discriminator(
                 mel,
                 singer_id,
                 semitone,
+                filename_list,
+                flag_filter_list
             ) = data_step
 
             singer_id = np.array(singer_id).reshape(
@@ -723,6 +754,8 @@ def train_one_epoch_discriminator(
                 char_len_list,
                 mel,
                 semitone,
+                filename_list,
+                flag_filter_list
             ) = data_step
         phone = phone.to(device)
         beat = beat.to(device)
@@ -883,6 +916,8 @@ def validate_one_epoch_discriminator(
                     mel,
                     singer_id,
                     semitone,
+                    filename_list,
+                    flag_filter_list
                 ) = data_step
 
                 singer_id = np.array(singer_id).reshape(
@@ -907,6 +942,8 @@ def validate_one_epoch_discriminator(
                     char_len_list,
                     mel,
                     semitone,
+                    filename_list,
+                    flag_filter_list
                 ) = data_step
             phone = phone.to(device)
             beat = beat.to(device)

@@ -6,26 +6,32 @@ val_align: data/alignment/dev
 val_pitch: data/pitch_beat_extraction/dev
 val_wav: data/wav_info/dev
 
-# standard: 4
-# sing_quality: conf/sing_quality.csv
+# augment related
+random_crop: True
+crop_min_length: 100
 
+Hz2semitone: True
+semitone_size: 59
+semitone_min: F_1
+semitone_max: D_6
+
+phone_shift_size: 2
+semitone_shift: False
+
+# model related
 model_type: LSTM
-# model_save_dir: exp/2020_1_21_rnn_norm_perp/model
-# stats_file: exp/2020_1_21_rnn_norm_perp/model/feats_stats.npz
-# stats_mel_file: exp/2020_1_21_rnn_norm_perp/model/feats_mel_stats.npz
-
-# normalize: True
-double_mel_loss: False
-perceptual_loss: 1e-2
+normalize: True
+# double_mel_loss: False
+perceptual_loss: 1e-4
 
 accumulation_steps: 1
 auto_select_gpu: False
-gpu_id: 1
+# gpu_id: 1
 
-max_epochs: 200
+max_epochs: 100
 
-batchsize: 8    # 10
-num_workers: 6
+batchsize: 10    # 10
+num_workers: 8
 
 mask_free: False
 use_asr_post: False

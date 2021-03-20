@@ -6,11 +6,22 @@ val_align: data/alignment/dev
 val_pitch: data/pitch_beat_extraction/dev
 val_wav: data/wav_info/dev
 
+# augment related
+random_crop: True
+crop_min_length: 100
+
+Hz2semitone: True
+semitone_size: 59
+semitone_min: F_1
+semitone_max: D_6
+
+# phone_shift_size: 2         
+# semitone_shift: True       # semitone index +- 12
 
 model_type: GLU_Transformer
 normalize: True
-double_mel_loss: False
-# perceptual_loss: 0.01
+# double_mel_loss: False
+perceptual_loss: 1e-4
 
 hidden_size: 256
 embedding_size: 256
@@ -34,11 +45,11 @@ frame_shift: 0.03
 
 # train related
 
-max_epochs: 300
+max_epochs: 60
 gradclip: 5
 
 batchsize: 10 # was 4
-num_workers: 6 # was 10
+num_workers: 10 # was 10
 
 accumulation_steps: 1
 auto_select_gpu: False

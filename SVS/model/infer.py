@@ -353,6 +353,7 @@ def infer(args):
         semitone_max=args.semitone_max,
         phone_shift_size=-1,
         semitone_shift=False,
+        finetune_dbname=args.finetune_dbname
     )
     collate_fn_svs = SVSCollator(
         args.num_frames,
@@ -439,6 +440,8 @@ def infer(args):
                     mel,
                     singer_id,
                     semitone,
+                    filename_list,
+                    flag_filter_list
                 ) = data_step
 
                 singer_id = np.array(singer_id).reshape(
@@ -462,6 +465,8 @@ def infer(args):
                     char_len_list,
                     mel,
                     semitone,
+                    filename_list,
+                    flag_filter_list
                 ) = data_step
 
             phone = phone.to(device)
@@ -559,12 +564,17 @@ def infer(args):
                 spec, _ = sepc_normalizer(spec, length)
                 mel, _ = mel_normalizer(mel, length)
 
+            # flag_filter:  0 - gt files, 1 - filtered augment files
+            # weight:       1 - gt files, filter_weight - filtered augment files
+            weight = [args.filter_weight if flag_filter == 1 else 1 for flag_filter in flag_filter_list]
+            weight = torch.FloatTensor(weight).to(device).float()
+
             if args.n_mels > 0:
                 spec_loss = 0
-                mel_loss = criterion(output_mel, mel, length_mel_mask)
+                mel_loss = criterion(output_mel, mel, length_mel_mask, weight)
                 mel_losses.update(mel_loss.item(), phone.size(0))
             else:
-                spec_loss = criterion(output, spec, length_mask)
+                spec_loss = criterion(output, spec, length_mask, weight)
                 mel_loss = 0
                 spec_losses.update(spec_loss.item(), phone.size(0))
 

@@ -17,17 +17,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import jsonargparse
+import yamlargparse
 import logging
 from SVS.model.train_predictor import train_predictor
 
 if __name__ == "__main__":
-    parser = jsonargparse.ArgumentParser(description="SVS training")
+    parser = yamlargparse.ArgumentParser(description="SVS training")
     parser.add_argument(
         "-c",
         "--config",
         help="config file path",
-        action=jsonargparse.ActionConfigFile,
+        action=yamlargparse.ActionConfigFile,
     )
     parser.add_argument("--train_align", help="alignment data dir used for training.")
     parser.add_argument("--train_pitch", help="pitch data dir used for training.")

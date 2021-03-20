@@ -31,7 +31,7 @@ class MaskedLoss(torch.nn.Module):
         self.loss = loss
         self.mask_free = mask_free
 
-    def forward(self, output, target, length):
+    def forward(self, output, target, length, weight):
         """forward."""
         if self.mask_free:
             if self.loss == "mse":
@@ -42,9 +42,13 @@ class MaskedLoss(torch.nn.Module):
             output = torch.mul(output, length)
             target = torch.mul(target, length)
             if self.loss == "mse":
-                return torch.sum((output - target) ** 2.0) / torch.sum(length)
+                score = (output - target) ** 2.0
             elif self.loss == "l1":
-                return torch.sum(torch.abs(output - target)) / torch.sum(length)
+                score = torch.abs(output - target)  # [batch size, length, dim]
+
+            score = torch.sum(score, (1,2)) # [batch size]
+            weight_score = torch.mul(score, weight)
+            return torch.sum(weight_score) / torch.sum(length)
 
 
 def tq(f_bin, fs, fft_bins):
@@ -328,6 +332,8 @@ class PerceptualEntropy(nn.Module):
             loss = torch.cat((loss, torch.mean(pe_real).view(1)), 0)
             loss = torch.cat((loss, torch.mean(pe_imag).view(1)), 0)
 
+        # print(f"pe loss: {loss}, {np.shape(loss)}")
+        # quit()
         return torch.reciprocal(torch.add(torch.sum(loss), 1))
 
 

@@ -185,6 +185,8 @@ def train(args):
         semitone_max=args.semitone_max,
         phone_shift_size=args.phone_shift_size,
         semitone_shift=args.semitone_shift,
+        finetune_dbname=args.finetune_dbname,
+        filter_wav_path=args.filter_wav_path
     )
 
     dev_set = SVSDataset(
@@ -210,6 +212,7 @@ def train(args):
         semitone_max=args.semitone_max,
         phone_shift_size=-1,
         semitone_shift=False,
+        finetune_dbname=args.finetune_dbname
     )
     collate_fn_svs_train = SVSCollator(
         args.num_frames,

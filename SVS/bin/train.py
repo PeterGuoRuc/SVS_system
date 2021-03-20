@@ -17,17 +17,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import jsonargparse
+import yamlargparse
 import logging
 from SVS.model.train import train
 
 if __name__ == "__main__":
-    parser = jsonargparse.ArgumentParser(description="SVS training")
+    parser = yamlargparse.ArgumentParser(description="SVS training")
     parser.add_argument(
         "-c",
         "--config",
         help="config file path",
-        action=jsonargparse.ActionConfigFile,
+        action=yamlargparse.ActionConfigFile,
     )
     parser.add_argument("--train_align", help="alignment data dir used for training.")
     parser.add_argument("--train_pitch", help="pitch data dir used for training.")
@@ -106,6 +106,24 @@ if __name__ == "__main__":
         type=bool,
         default=False,
         help="semitone index shift 12 in limited interval, False means no augment",
+    )
+    parser.add_argument(
+        "--finetune_dbname",
+        type=str,
+        default="None",
+        help="Only focus on finetune_dbname when fine-tune period, init dataloader",
+    )
+    parser.add_argument(
+        "--filter_wav_path",
+        type=str,
+        default="None",
+        help="The path for filtered augmented wav data, other music info is the same to no augmented data",
+    )
+    parser.add_argument(
+        "--filter_weight",
+        type=float,
+        default=0.1,
+        help="The filter_weight for filtered augmented data when calculate loss in training period",
     )
     parser.add_argument(
         "--max_epochs",

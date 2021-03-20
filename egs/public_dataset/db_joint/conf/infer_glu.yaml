@@ -3,6 +3,11 @@ test_align: data/alignment/test
 test_pitch: data/pitch_beat_extraction/test
 test_wav: data/wav_info/test
 
+Hz2semitone: True
+semitone_size: 59
+semitone_min: F_1
+semitone_max: D_6
+
 # gpu related
 auto_select_gpu: False
 # gpu_id: 7

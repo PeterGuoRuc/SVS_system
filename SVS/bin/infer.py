@@ -17,17 +17,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-import jsonargparse
+import yamlargparse
 import logging
 from SVS.model.infer import infer
 
 if __name__ == "__main__":
-    parser = jsonargparse.ArgumentParser(description="SVS training")
+    parser = yamlargparse.ArgumentParser(description="SVS training")
     parser.add_argument(
         "-c",
         "--config",
         help="config file path",
-        action=jsonargparse.ActionConfigFile,
+        action=yamlargparse.ActionConfigFile,
     )
     parser.add_argument("--test_align", help="alignment data dir used for validation.")
     parser.add_argument("--test_pitch", help="pitch data dir used for validation.")
@@ -73,6 +73,12 @@ if __name__ == "__main__":
         type=str,
         default="D_6",
         help="Maximum semitone of your dataset, can be found in data/semitone_set.txt",
+    )
+    parser.add_argument(
+        "--finetune_dbname",
+        type=str,
+        default="None",
+        help="Only focus on finetune_dbname when fine-tune period, init dataloader",
     )
     parser.add_argument(
         "--char_max_len", default=100, type=int, help="max length for character"
