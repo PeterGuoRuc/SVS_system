@@ -206,7 +206,7 @@ class PerceptualEntropy(nn.Module):
         # cutoff is one-based
         self.cutoff = 1
 
-    def forward(self, log_magnitude, real, imag):
+    def forward(self, log_magnitude, real, imag, length, weight, device):
         """forward."""
         # in case for initial turbulance, may use clamp to clip extreme value
         spectrum = torch.clamp(log_magnitude, -1000, 10)
@@ -329,11 +329,27 @@ class PerceptualEntropy(nn.Module):
                 )
             )
 
-            loss = torch.cat((loss, torch.mean(pe_real).view(1)), 0)
-            loss = torch.cat((loss, torch.mean(pe_imag).view(1)), 0)
+            # pe_real, pe_imag - [batch size, max length, not same for each for-epoch]
+            length_real_mask = length.repeat(1, 1, pe_real.shape[2]).float()
+            length_real_mask = length_real_mask.to(device)
+            length_imag_mask = length.repeat(1, 1, pe_imag.shape[2]).float()
+            length_imag_mask = length_imag_mask.to(device)
 
-        # print(f"pe loss: {loss}, {np.shape(loss)}")
-        # quit()
+            pe_real = torch.mul(pe_real, length_real_mask)
+            pe_imag = torch.mul(pe_imag, length_imag_mask)
+
+            score_real = torch.sum(pe_real, (1,2))         # [batch size]
+            score_imag = torch.sum(pe_imag, (1,2))         # [batch size]
+
+            weight_real = torch.mul(score_real, weight)
+            weight_imag = torch.mul(score_imag, weight)
+
+            loss_real = torch.sum(weight_real) / torch.sum(length_real_mask)
+            loss_imag = torch.sum(weight_imag) / torch.sum(length_imag_mask)
+
+            loss = torch.cat((loss, loss_real.view(1)), 0)
+            loss = torch.cat((loss, loss_imag.view(1)), 0)
+
         return torch.reciprocal(torch.add(torch.sum(loss), 1))
 
 

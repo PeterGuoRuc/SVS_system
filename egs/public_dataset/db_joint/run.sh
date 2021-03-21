@@ -6,8 +6,8 @@
 . ./cmd.sh || exit 1;
 
 
-stage=1
-stop_stage=2
+stage=3
+stop_stage=3
 ngpu=1
 raw_data_dir=data
 download_wavernn_vocoder=False
@@ -50,7 +50,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
   train.py \
     --db_joint True \
     --gpu_id 0 \
-    -c conf/train_${model_name}_wavernn.yaml \
+    -c conf/train_${model_name}.yaml \
     --collect_stats True \
     --model_save_dir ${expdir} \
     --stats_file ${expdir}/feats_stats.npz \
@@ -97,7 +97,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
   ${cuda_cmd} --gpu ${ngpu} ${expdir}/stats_filter_aug.log \
   train.py \
     --db_joint True \
-    --gpu_id 1 \
+    --gpu_id 0 \
     -c conf/train_${model_name}.yaml \
     --model_save_dir ${expdir}/filter_aug \
     --stats_file ${expdir}/feats_stats.npz \
@@ -106,26 +106,6 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
     --filter_wav_path /data1/gs/SVS_system/egs/public_dataset/db_joint/local/filter_wav_filename.txt \
     --filter_weight 0.1
 fi
-
-if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then 
-  # Stage3: train
-  echo ===============
-  echo " Stage3: train with augmented data"
-  echo ===============
-
-  ${cuda_cmd} --gpu ${ngpu} ${expdir}/stats_filter_aug.log \
-  train.py \
-    --db_joint True \
-    --gpu_id 1 \
-    -c conf/train_${model_name}.yaml \
-    --model_save_dir ${expdir}/filter_aug \
-    --stats_file ${expdir}/feats_stats.npz \
-    --stats_mel_file ${expdir}/feats_mel_stats.npz \
-    --initmodel ${expdir}/epoch_spec_loss_27.pth.tar \
-    --filter_wav_path /data1/gs/SVS_system/egs/public_dataset/db_joint/local/filter_wav_filename.txt \
-    --filter_weight 0.1
-fi
-
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then 
   # Stage4: inference

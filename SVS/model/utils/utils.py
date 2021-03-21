@@ -195,6 +195,8 @@ def train_one_epoch(
         if mel is not None:
             length_mel_mask = length_mask.repeat(1, 1, mel.shape[2]).float()
             length_mel_mask = length_mel_mask.to(device)
+        if args.perceptual_loss > 0:
+            length_pe_premask = (length > 0).int().unsqueeze(2)
         length_mask = length_mask.repeat(1, 1, spec.shape[2]).float()
         length_mask = length_mask.to(device)
         length = length.to(device)
@@ -302,13 +304,7 @@ def train_one_epoch(
         else:
             train_loss = mel_loss + double_mel_loss + spec_loss
         if args.perceptual_loss > 0:
-            pe_loss = perceptual_entropy(output, real, imag)
-            
-            # print(f"weight: {weight}")
-            # print(f"flag_filter_list: {flag_filter_list}")
-            # print(f"spec_loss: {spec_loss}")
-
-            # quit()
+            pe_loss = perceptual_entropy(output, real, imag, length_pe_premask, weight, device)
             final_loss = (
                 args.perceptual_loss * pe_loss + (1 - args.perceptual_loss) * train_loss
             )
@@ -485,6 +481,8 @@ def validate(
             if mel is not None:
                 length_mel_mask = length_mask.repeat(1, 1, mel.shape[2]).float()
                 length_mel_mask = length_mel_mask.to(device)
+            if args.perceptual_loss > 0:
+                length_pe_premask = (length > 0).int().unsqueeze(2)
             length_mask = length_mask.repeat(1, 1, spec.shape[2]).float()
             length_mask = length_mask.to(device)
             length = length.to(device)
@@ -598,7 +596,7 @@ def validate(
                 dev_loss = mel_loss + double_mel_loss + spec_loss
 
             if args.perceptual_loss > 0:
-                pe_loss = perceptual_entropy(output, real, imag)
+                pe_loss = perceptual_entropy(output, real, imag, length_pe_premask, weight, device)
                 final_loss = (
                     args.perceptual_loss * pe_loss
                     + (1 - args.perceptual_loss) * dev_loss
@@ -611,7 +609,6 @@ def validate(
                 spec_losses.update(spec_loss.item(), phone.size(0))
 
             if args.perceptual_loss > 0:
-                # pe_loss = perceptual_entropy(output, real, imag)
                 pe_losses.update(pe_loss.item(), phone.size(0))
             if args.n_mels > 0:
                 mel_losses.update(mel_loss.item(), phone.size(0))

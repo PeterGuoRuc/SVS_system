@@ -1,0 +1,29 @@
+# db_joint data
+test_align: data/alignment/train
+test_pitch: data/pitch_beat_extraction/train
+test_wav: /data1/gs/SVS_system/egs/public_dataset/db_joint/exp/3_18_augment/train_result
+
+# augment related
+Hz2semitone: True
+semitone_size: 59
+semitone_min: F_1
+semitone_max: D_6
+
+normalize: True
+
+auto_select_gpu: False
+
+use_asr_post: False
+sampling_rate: 22050
+nfft: 2048
+feat_dim: 1025
+n_mels: 80
+
+frame_length: 0.06
+frame_shift: 0.03
+num_frames: 500
+char_max_len: 100
+
+phone_size: 68
+singer_size: 10
+seed: 777
