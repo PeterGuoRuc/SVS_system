@@ -6,8 +6,8 @@
 . ./cmd.sh || exit 1;
 
 
-stage=3
-stop_stage=3
+stage=1
+stop_stage=2
 ngpu=1
 raw_data_dir=data
 download_wavernn_vocoder=False

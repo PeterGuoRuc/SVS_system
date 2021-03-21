@@ -350,6 +350,8 @@ class PerceptualEntropy(nn.Module):
             loss = torch.cat((loss, loss_real.view(1)), 0)
             loss = torch.cat((loss, loss_imag.view(1)), 0)
 
+        # print(f"pe loss: {loss}, {np.shape(loss)}")
+        # quit()
         return torch.reciprocal(torch.add(torch.sum(loss), 1))
 
 
