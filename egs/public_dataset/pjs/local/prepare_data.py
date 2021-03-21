@@ -175,7 +175,7 @@ def process(args):
     lab_list = [
         os.path.join(name, name + ".lab")
         for name in os.listdir(args.labdir)
-        if os.path.isdir(os.path.join(args.labdir, name))
+        if os.path.isdir(os.path.join(args.labdir, name)) and name[:3] == "pjs"
     ]
 
     lab_list.sort()
