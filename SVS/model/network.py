@@ -1949,6 +1949,45 @@ class USTC_Prenet(nn.Module):
 
         return output
 
+class Joint_generator_predictor(nn.Module):
+    def __init__(self, generator, predictor):
+        super(Joint_generator_predictor, self).__init__()
+        self.generator = generator
+        self.predictor = predictor
+        
+    def forward(self, args, chars, phone, pitch, beat, singer_vec, char_len_list, length):
+
+        if args.model_type == "GLU_Transformer":
+            if args.db_joint:
+                output_spec, att, output_mel, output_mel2 = self.generator(
+                    chars,
+                    phone,
+                    pitch,
+                    beat,
+                    singer_vec,
+                    pos_char=char_len_list,
+                    pos_spec=length,
+                )
+            else:
+                output_spec, att, output_mel, output_mel2 = self.generator(
+                    chars, phone, pitch, beat, pos_char=char_len_list, pos_spec=length
+                )
+        elif args.model_type == "LSTM":
+            if args.db_joint:
+                output, hidden, output_mel, output_mel2 = self.generator(
+                    phone, pitch, beat, singer_vec
+                )
+            else:
+                output_spec, hidden, output_mel, output_mel2 = self.generator(phone, pitch, beat)
+            att = None
+
+        len_list, _ = torch.max(length, dim=1)
+        len_list = len_list.cpu().detach().numpy()
+
+        singer_out, phone_out, semitone_out = self.predictor(output_spec, len_list)
+
+        return output_spec, att, output_mel, output_mel2, singer_out, phone_out, semitone_out
+
 
 class USTC_SVS(nn.Module):
     """Singing Voice Synthesis Using Deep Autoregressive Neural Networks.

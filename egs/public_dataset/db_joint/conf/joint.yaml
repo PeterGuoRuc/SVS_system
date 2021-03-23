@@ -1,0 +1,67 @@
+# db_joint data
+train_align: data/alignment/train
+train_pitch: data/pitch_beat_extraction/train
+train_wav: data/wav_info/train
+val_align: data/alignment/dev
+val_pitch: data/pitch_beat_extraction/dev
+val_wav: data/wav_info/dev
+
+# augment related
+random_crop: True
+crop_min_length: 100
+
+Hz2semitone: True
+semitone_size: 59
+semitone_min: F_1
+semitone_max: D_6
+
+# phone_shift_size: 2         
+# semitone_shift: True       # semitone index +- 12
+
+model_type: GLU_Transformer
+normalize: True
+# double_mel_loss: False
+perceptual_loss: 1e-4
+
+hidden_size: 256
+embedding_size: 256
+glu_num_layers: 3
+
+dec_nhead: 4
+dec_num_block: 6
+num_frames: 500
+char_max_len: 100
+phone_size: 68
+singer_size: 10
+local_gaussian: True
+
+# feature related
+sampling_rate: 22050
+nfft: 2048
+n_mels: 80
+feat_dim: 1025
+frame_length: 0.06
+frame_shift: 0.03
+
+# train related
+
+max_epochs: 120
+gradclip: 5
+
+batchsize: 10 # was 6
+num_workers: 10 # was 10
+
+accumulation_steps: 1
+auto_select_gpu: False
+# gpu_id: 0
+
+optimizer: noam
+lr: 1e-3     # was 0.001
+noam_scale: 1.0
+noam_warmup_steps: 4000   # was 4000
+
+train_step_log: 180
+dev_step_log: 6
+seed: 777
+
+

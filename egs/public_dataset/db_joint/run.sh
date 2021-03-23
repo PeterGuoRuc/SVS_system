@@ -6,8 +6,8 @@
 . ./cmd.sh || exit 1;
 
 
-stage=1
-stop_stage=2
+stage=5
+stop_stage=5
 ngpu=1
 raw_data_dir=data
 download_wavernn_vocoder=False
@@ -97,14 +97,14 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
   ${cuda_cmd} --gpu ${ngpu} ${expdir}/stats_filter_aug.log \
   train.py \
     --db_joint True \
-    --gpu_id 0 \
+    --gpu_id 1 \
     -c conf/train_${model_name}.yaml \
     --model_save_dir ${expdir}/filter_aug \
     --stats_file ${expdir}/feats_stats.npz \
     --stats_mel_file ${expdir}/feats_mel_stats.npz \
-    --initmodel ${expdir}/epoch_spec_loss_27.pth.tar \
     --filter_wav_path /data1/gs/SVS_system/egs/public_dataset/db_joint/local/filter_wav_filename.txt \
     --filter_weight 0.1
+    # --initmodel ${expdir}/epoch_spec_loss_27.pth.tar \
 fi
 
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then 
@@ -120,6 +120,24 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     -c conf/infer_${model_name}.yaml \
     --prediction_path ${expdir}/infer_result \
     --model_file ${expdir}/epoch_spec_loss_41.pth.tar \
+    --stats_file ${expdir}/feats_stats.npz \
+    --stats_mel_file ${expdir}/feats_mel_stats.npz
+
+fi
+
+if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then 
+  # Stage4: inference
+  echo ===============
+  echo " Stage4: infer augmented model"
+  echo ===============
+
+  ${cuda_cmd} -gpu ${ngpu} ${expdir}/svs_infer_aug.log \
+  infer.py \
+    --db_joint True \
+    --gpu_id 0 \
+    -c conf/infer_${model_name}.yaml \
+    --prediction_path ${expdir}/infer_result_aug \
+    --model_file ${expdir}/filter_aug/epoch_spec_loss_17.pth.tar \
     --stats_file ${expdir}/feats_stats.npz \
     --stats_mel_file ${expdir}/feats_mel_stats.npz
 

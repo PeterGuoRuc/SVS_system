@@ -166,6 +166,8 @@ def infer_predictor(args):
                     mel,
                     singer_id,
                     semitone,
+                    filename_list,
+                    flag_filter_list
                 ) = data_step
 
                 singer_id = np.array(singer_id).reshape(
@@ -175,7 +177,7 @@ def infer_predictor(args):
                     np.shape(phone)[1], axis=1
                 )  # [batch size, length]
                 singer_vec = torch.from_numpy(singer_vec).to(device)
-                singer_id = torch.from_numpy(singer_id).to(device)
+
             else:
                 (
                     phone,
@@ -189,6 +191,8 @@ def infer_predictor(args):
                     char_len_list,
                     mel,
                     semitone,
+                    filename_list,
+                    flag_filter_list
                 ) = data_step
 
             phone = phone.to(device)

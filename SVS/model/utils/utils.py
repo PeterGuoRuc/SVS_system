@@ -135,9 +135,6 @@ def train_one_epoch(
 
     start = time.time()
 
-    # f0_ground_truth_all = np.reshape(np.array([]), (-1, 1))
-    # f0_synthesis_all = np.reshape(np.array([]), (-1, 1))
-
     for (step, data_step) in enumerate(train_loader, 1):
         if args.db_joint:
             (
@@ -270,6 +267,7 @@ def train_one_epoch(
             )  # mel loss written in spec loss
             att = None
 
+        # calculate loss
         spec_origin = spec.clone()
         mel_origin = mel.clone()
         if args.normalize:
@@ -1054,6 +1052,636 @@ def validate_one_epoch_discriminator(
         "phone_accuracy": phone_count.avg,
         "semitone_accuracy": semitone_count.avg,
     }
+    return info
+
+def train_one_epoch_joint(
+    train_loader,
+    model,
+    device,
+    optimizer,
+    criterion_generate,
+    criterion_predict,
+    perceptual_entropy,
+    epoch,
+    args,
+):
+    """train_one_epoch_joint."""
+    losses = AverageMeter()
+    spec_losses = AverageMeter()
+    if args.perceptual_loss > 0:
+        pe_losses = AverageMeter()
+    if args.n_mels > 0:
+        mel_losses = AverageMeter()
+        if args.double_mel_loss:
+            double_mel_losses = AverageMeter()
+
+    singer_losses = AverageMeter()
+    phone_losses = AverageMeter()
+    semitone_losses = AverageMeter()
+
+    singer_count = AverageMeter()
+    phone_count = AverageMeter()
+    semitone_count = AverageMeter()
+
+    model.train()
+
+    log_save_dir = os.path.join(
+        args.model_save_dir, "epoch{}/log_train_figure".format(epoch)
+    )
+    if not os.path.exists(log_save_dir):
+        os.makedirs(log_save_dir)
+
+    start = time.time()
+
+    for (step, data_step) in enumerate(train_loader, 1):
+        if args.db_joint:
+            (
+                phone,
+                beat,
+                pitch,
+                spec,
+                real,
+                imag,
+                length,
+                chars,
+                char_len_list,
+                mel,
+                singer_id,
+                semitone,
+                filename_list,
+                flag_filter_list
+            ) = data_step
+
+            singer_id = np.array(singer_id).reshape(
+                np.shape(phone)[0], -1
+            )  # [batch size, 1]
+            singer_vec = singer_id.repeat(
+                np.shape(phone)[1], axis=1
+            )  # [batch size, length]
+            singer_vec = torch.from_numpy(singer_vec).to(device)
+            singer_id = torch.from_numpy(singer_id).to(device)
+
+        else:
+            (
+                phone,
+                beat,
+                pitch,
+                spec,
+                real,
+                imag,
+                length,
+                chars,
+                char_len_list,
+                mel,
+                semitone,
+                filename_list,
+                flag_filter_list
+            ) = data_step
+        phone = phone.to(device)
+        beat = beat.to(device)
+        pitch = pitch.to(device).float()
+        if semitone is not None:
+            semitone = semitone.to(device)
+        spec = spec.to(device).float()
+        if mel is not None:
+            mel = mel.to(device).float()
+        real = real.to(device).float()
+        imag = imag.to(device).float()
+        length_mask = (length > 0).int().unsqueeze(2)
+        if mel is not None:
+            length_mel_mask = length_mask.repeat(1, 1, mel.shape[2]).float()
+            length_mel_mask = length_mel_mask.to(device)
+        if args.perceptual_loss > 0:
+            length_pe_premask = (length > 0).int().unsqueeze(2)
+        length_mask = length_mask.repeat(1, 1, spec.shape[2]).float()
+        length_mask = length_mask.to(device)
+        length = length.to(device)
+        char_len_list = char_len_list.to(device)
+
+        if not args.use_asr_post:
+            chars = chars.to(device)
+            char_len_list = char_len_list.to(device)
+        else:
+            phone = phone.float()
+
+        if args.Hz2semitone:
+            pitch = semitone
+
+        # Network Forward stage
+        output_spec, att, output_mel, output_mel2, singer_out, phone_out, semitone_out = model(args, chars, phone, pitch, beat, singer_vec, char_len_list, length)
+
+        # Calculate loss
+        spec_origin = spec.clone()
+        mel_origin = mel.clone()
+        if args.normalize:
+            sepc_normalizer = GlobalMVN(args.stats_file)
+            mel_normalizer = GlobalMVN(args.stats_mel_file)
+            output_mel_normalizer = GlobalMVN(args.stats_mel_file)
+            spec, _ = sepc_normalizer(spec, length)
+            mel, _ = mel_normalizer(mel, length)
+
+        # flag_filter:  0 - gt files, 1 - filtered augment files
+        # weight:       1 - gt files, filter_weight - filtered augment files
+        weight = [args.filter_weight if flag_filter == 1 else 1 for flag_filter in flag_filter_list]
+        weight = torch.FloatTensor(weight).to(device).float()
+
+        # Generator loss
+        if args.model_type == "USTC_DAR":
+            spec_loss = 0
+        else:
+            spec_loss = criterion_generate(output_spec, spec, length_mask, weight)
+
+        if args.n_mels > 0:
+            mel_loss = criterion_generate(output_mel, mel, length_mel_mask, weight)
+            if args.double_mel_loss:
+                double_mel_loss = criterion_generate(output_mel2, mel, length_mel_mask, weight)
+            else:
+                double_mel_loss = 0
+        else:
+            mel_loss = 0
+            double_mel_loss = 0
+
+        if args.vocoder_category == "wavernn":
+            train_loss = mel_loss + double_mel_loss
+        else:
+            train_loss = mel_loss + double_mel_loss + spec_loss
+        if args.perceptual_loss > 0:
+            pe_loss = perceptual_entropy(output_spec, real, imag, length_pe_premask, weight, device)
+            generator_loss = (
+                args.perceptual_loss * pe_loss + (1 - args.perceptual_loss) * train_loss
+            )
+        else:
+            generator_loss = train_loss
+
+        # Predictor loss
+        # calculate CrossEntropy loss (defination - reduction:sum)
+        len_list, _ = torch.max(length, dim=1)
+        len_list = len_list.cpu().detach().numpy()
+
+        phone_loss = 0
+        semitone_loss = 0
+        phone_correct = 0
+        semitone_correct = 0
+        batch_size = np.shape(spec)[0]
+        for i in range(batch_size):
+            phone_i = phone[i, : len_list[i], :].view(-1)  # [valid seq len]
+            phone_out_i = phone_out[i, : len_list[i], :]  # [valid seq len, phone_size]
+            phone_loss += criterion_predict(phone_out_i, phone_i)
+
+            _, phone_predict = torch.max(phone_out_i, dim=1)
+            phone_correct += phone_predict.eq(phone_i).cpu().sum().numpy()
+
+            semitone_i = semitone[i, : len_list[i], :].view(-1)  # [valid seq len]
+            semitone_out_i = semitone_out[
+                i, : len_list[i], :
+            ]  # [valid seq len, semitone_size]
+            semitone_loss += criterion_predict(semitone_out_i, semitone_i)
+
+            _, semitone_predict = torch.max(semitone_out_i, dim=1)
+            semitone_correct += semitone_predict.eq(semitone_i).cpu().sum().numpy()
+
+        singer_id = singer_id.view(-1)  # [batch size]
+        _, singer_predict = torch.max(singer_out, dim=1)
+        singer_correct = singer_predict.eq(singer_id).cpu().sum().numpy()
+
+        phone_loss /= np.sum(len_list)
+        semitone_loss /= np.sum(len_list)
+        singer_loss = criterion_predict(singer_out, singer_id) / batch_size
+
+        predictor_loss = singer_loss + phone_loss + semitone_loss
+
+        # Total loss
+        total_loss = (1 - args.predictor_weight) * generator_loss + args.predictor_weight * predictor_loss
+
+        # Total loss backward
+        total_loss = total_loss / args.accumulation_steps
+        total_loss.backward()
+
+        if args.gradclip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.gradclip)
+
+        if (epoch + 1) % args.accumulation_steps == 0:
+            if args.optimizer == "noam":
+                optimizer.step_and_update_lr()
+            else:
+                optimizer.step()
+            # 梯度清零
+            optimizer.zero_grad()
+
+        # Record loss info - generator
+        losses.update(total_loss.item(), phone.size(0))
+        if args.model_type != "USTC_DAR":
+            spec_losses.update(spec_loss.item(), phone.size(0))
+
+        if args.perceptual_loss > 0:
+            pe_losses.update(pe_loss.item(), phone.size(0))
+        if args.n_mels > 0:
+            mel_losses.update(mel_loss.item(), phone.size(0))
+            if args.double_mel_loss:
+                double_mel_losses.update(double_mel_loss.item(), phone.size(0))
+
+        # Record loss info - predictor
+        singer_losses.update(singer_loss.item(), batch_size)
+        phone_losses.update(phone_loss.item(), np.sum(len_list))
+        semitone_losses.update(semitone_loss.item(), np.sum(len_list))
+
+        singer_count.update(singer_correct.item() / batch_size, batch_size)
+        phone_count.update(phone_correct.item() / np.sum(len_list), np.sum(len_list))
+        semitone_count.update(
+            semitone_correct.item() / np.sum(len_list), np.sum(len_list)
+        )
+
+        # break
+
+        # Print train_step_log info
+        if step % args.train_step_log == 0:
+            end = time.time()
+
+            # Display generated .wav files
+            if args.normalize and args.stats_file:
+                output_spec, _ = sepc_normalizer.inverse(output_spec, length)
+                mel, _ = mel_normalizer.inverse(mel, length)
+                output_mel = output_mel_normalizer.inverse(output_mel, length)
+
+            if args.vocoder_category == "wavernn":
+                # Kiritan’s output_mel is a tuple type and needs to be preprocessed
+                if isinstance(output_mel, tuple):
+                    output_mel = output_mel[0]
+                for i in range(output_mel.shape[0]):
+                    one_batch_output_mel = output_mel[i].unsqueeze(0)
+                    one_batch_mel = mel[i].unsqueeze(0)
+                    log_mel(
+                        step,
+                        one_batch_output_mel,
+                        one_batch_mel,
+                        att,
+                        length,
+                        log_save_dir,
+                        args,
+                        voc_model,
+                    )
+            else:
+                log_figure(
+                    step, output_spec, spec_origin, att, length, log_save_dir, args
+                )
+            
+            # Print Generator step-loss info
+            out_log = "step {}: total_loss {:.4f}; \nspec_loss {:.4f};".format(
+                step, losses.avg, spec_losses.avg
+            )
+            if args.perceptual_loss > 0:
+                out_log += "pe_loss {:.4f}; ".format(pe_losses.avg)
+            if args.n_mels > 0:
+                out_log += "mel_loss {:.4f}; ".format(mel_losses.avg)
+                if args.double_mel_loss:
+                    out_log += "dmel_loss {:.4f}; \n".format(double_mel_losses.avg)
+
+            # Print Predictor step-loss info
+            out_log = "step {}: predictor_loss {:.6f}, ".format(
+                step, singer_losses.avg + phone_losses.avg + semitone_losses.avg
+            )
+            out_log += "\t singer_loss: {:.4f} ".format(singer_losses.avg)
+            out_log += "phone_loss: {:.4f} ".format(phone_losses.avg)
+            out_log += "semitone_loss: {:.4f} \n".format(semitone_losses.avg)
+
+            out_log += "\t singer_accuracy: {:.4f}% ".format(singer_count.avg * 100)
+            out_log += "phone_accuracy: {:.4f}% ".format(phone_count.avg * 100)
+            out_log += "semitone_accuracy: {:.4f}% ".format(semitone_count.avg * 100)
+
+            print("{} -- sum_time: {:.2f}s".format(out_log, (end - start)))
+
+    info = {
+        "loss": losses.avg, 
+
+        # generator loss
+        "spec_loss": spec_losses.avg,
+
+        # predictor loss
+        "singer_loss": singer_losses.avg,
+        "phone_loss": phone_losses.avg,
+        "semitone_loss": semitone_losses.avg,
+        "singer_accuracy": singer_count.avg,
+        "phone_accuracy": phone_count.avg,
+        "semitone_accuracy": semitone_count.avg,
+    }
+    generator_loss = spec_losses.avg
+    if args.perceptual_loss > 0:
+        info["pe_loss"] = pe_losses.avg
+        generator_loss += pe_losses.avg
+    if args.n_mels > 0:
+        info["mel_loss"] = mel_losses.avg
+        generator_loss += mel_losses.avg
+    info["generator_loss"] = generator_loss
+    info["predictor_loss"] = singer_losses.avg + phone_losses.avg + semitone_losses.avg
+
+    return info
+
+def validate_one_epoch_joint(
+    dev_loader,
+    model,
+    device,
+    optimizer,
+    criterion_generate,
+    criterion_predict,
+    perceptual_entropy,
+    epoch,
+    args,
+):
+    """validate_one_epoch_joint."""
+    losses = AverageMeter()
+    spec_losses = AverageMeter()
+    if args.perceptual_loss > 0:
+        pe_losses = AverageMeter()
+    if args.n_mels > 0:
+        mel_losses = AverageMeter()
+        if args.double_mel_loss:
+            double_mel_losses = AverageMeter()
+
+    singer_losses = AverageMeter()
+    phone_losses = AverageMeter()
+    semitone_losses = AverageMeter()
+
+    singer_count = AverageMeter()
+    phone_count = AverageMeter()
+    semitone_count = AverageMeter()
+
+    model.eval()
+
+    log_save_dir = os.path.join(
+        args.model_save_dir, "epoch{}/log_val_figure".format(epoch)
+    )
+    if not os.path.exists(log_save_dir):
+        os.makedirs(log_save_dir)
+
+    start = time.time()
+
+    with torch.no_grad():
+        for (step, data_step) in enumerate(dev_loader, 1):
+            if args.db_joint:
+                (
+                    phone,
+                    beat,
+                    pitch,
+                    spec,
+                    real,
+                    imag,
+                    length,
+                    chars,
+                    char_len_list,
+                    mel,
+                    singer_id,
+                    semitone,
+                    filename_list,
+                    flag_filter_list
+                ) = data_step
+
+                singer_id = np.array(singer_id).reshape(
+                    np.shape(phone)[0], -1
+                )  # [batch size, 1]
+                singer_vec = singer_id.repeat(
+                    np.shape(phone)[1], axis=1
+                )  # [batch size, length]
+                singer_vec = torch.from_numpy(singer_vec).to(device)
+                singer_id = torch.from_numpy(singer_id).to(device)
+
+            else:
+                (
+                    phone,
+                    beat,
+                    pitch,
+                    spec,
+                    real,
+                    imag,
+                    length,
+                    chars,
+                    char_len_list,
+                    mel,
+                    semitone,
+                    filename_list,
+                    flag_filter_list
+                ) = data_step
+            phone = phone.to(device)
+            beat = beat.to(device)
+            pitch = pitch.to(device).float()
+            if semitone is not None:
+                semitone = semitone.to(device)
+            spec = spec.to(device).float()
+            if mel is not None:
+                mel = mel.to(device).float()
+            real = real.to(device).float()
+            imag = imag.to(device).float()
+            length_mask = (length > 0).int().unsqueeze(2)
+            if mel is not None:
+                length_mel_mask = length_mask.repeat(1, 1, mel.shape[2]).float()
+                length_mel_mask = length_mel_mask.to(device)
+            if args.perceptual_loss > 0:
+                length_pe_premask = (length > 0).int().unsqueeze(2)
+            length_mask = length_mask.repeat(1, 1, spec.shape[2]).float()
+            length_mask = length_mask.to(device)
+            length = length.to(device)
+            char_len_list = char_len_list.to(device)
+
+            if not args.use_asr_post:
+                chars = chars.to(device)
+                char_len_list = char_len_list.to(device)
+            else:
+                phone = phone.float()
+
+            if args.Hz2semitone:
+                pitch = semitone
+
+            # Network Forward stage
+            output_spec, att, output_mel, output_mel2, singer_out, phone_out, semitone_out = model(args, chars, phone, pitch, beat, singer_vec, char_len_list, length)
+
+            # Calculate loss
+            spec_origin = spec.clone()
+            mel_origin = mel.clone()
+            if args.normalize:
+                sepc_normalizer = GlobalMVN(args.stats_file)
+                mel_normalizer = GlobalMVN(args.stats_mel_file)
+                output_mel_normalizer = GlobalMVN(args.stats_mel_file)
+                spec, _ = sepc_normalizer(spec, length)
+                mel, _ = mel_normalizer(mel, length)
+
+            # flag_filter:  0 - gt files, 1 - filtered augment files
+            # weight:       1 - gt files, filter_weight - filtered augment files
+            weight = [args.filter_weight if flag_filter == 1 else 1 for flag_filter in flag_filter_list]
+            weight = torch.FloatTensor(weight).to(device).float()
+
+            # Generator loss
+            if args.model_type == "USTC_DAR":
+                spec_loss = 0
+            else:
+                spec_loss = criterion_generate(output_spec, spec, length_mask, weight)
+
+            if args.n_mels > 0:
+                mel_loss = criterion_generate(output_mel, mel, length_mel_mask, weight)
+                if args.double_mel_loss:
+                    double_mel_loss = criterion_generate(output_mel2, mel, length_mel_mask, weight)
+                else:
+                    double_mel_loss = 0
+            else:
+                mel_loss = 0
+                double_mel_loss = 0
+
+            if args.vocoder_category == "wavernn":
+                train_loss = mel_loss + double_mel_loss
+            else:
+                train_loss = mel_loss + double_mel_loss + spec_loss
+            if args.perceptual_loss > 0:
+                pe_loss = perceptual_entropy(output_spec, real, imag, length_pe_premask, weight, device)
+                generator_loss = (
+                    args.perceptual_loss * pe_loss + (1 - args.perceptual_loss) * train_loss
+                )
+            else:
+                generator_loss = train_loss
+
+            # Predictor loss
+            # calculate CrossEntropy loss (defination - reduction:sum)
+            len_list, _ = torch.max(length, dim=1)
+            len_list = len_list.cpu().detach().numpy()
+
+            phone_loss = 0
+            semitone_loss = 0
+            phone_correct = 0
+            semitone_correct = 0
+            batch_size = np.shape(spec)[0]
+            for i in range(batch_size):
+                phone_i = phone[i, : len_list[i], :].view(-1)  # [valid seq len]
+                phone_out_i = phone_out[i, : len_list[i], :]  # [valid seq len, phone_size]
+                phone_loss += criterion_predict(phone_out_i, phone_i)
+
+                _, phone_predict = torch.max(phone_out_i, dim=1)
+                phone_correct += phone_predict.eq(phone_i).cpu().sum().numpy()
+
+                semitone_i = semitone[i, : len_list[i], :].view(-1)  # [valid seq len]
+                semitone_out_i = semitone_out[
+                    i, : len_list[i], :
+                ]  # [valid seq len, semitone_size]
+                semitone_loss += criterion_predict(semitone_out_i, semitone_i)
+
+                _, semitone_predict = torch.max(semitone_out_i, dim=1)
+                semitone_correct += semitone_predict.eq(semitone_i).cpu().sum().numpy()
+
+            singer_id = singer_id.view(-1)  # [batch size]
+            _, singer_predict = torch.max(singer_out, dim=1)
+            singer_correct = singer_predict.eq(singer_id).cpu().sum().numpy()
+
+            phone_loss /= np.sum(len_list)
+            semitone_loss /= np.sum(len_list)
+            singer_loss = criterion_predict(singer_out, singer_id) / batch_size
+
+            predictor_loss = singer_loss + phone_loss + semitone_loss
+
+            # Total loss
+            total_loss = (1 - args.predictor_weight) * generator_loss + args.predictor_weight * predictor_loss
+
+            # Record loss info - generator
+            losses.update(total_loss.item(), phone.size(0))
+            if args.model_type != "USTC_DAR":
+                spec_losses.update(spec_loss.item(), phone.size(0))
+
+            if args.perceptual_loss > 0:
+                pe_losses.update(pe_loss.item(), phone.size(0))
+            if args.n_mels > 0:
+                mel_losses.update(mel_loss.item(), phone.size(0))
+                if args.double_mel_loss:
+                    double_mel_losses.update(double_mel_loss.item(), phone.size(0))
+
+            # Record loss info - predictor
+            singer_losses.update(singer_loss.item(), batch_size)
+            phone_losses.update(phone_loss.item(), np.sum(len_list))
+            semitone_losses.update(semitone_loss.item(), np.sum(len_list))
+
+            singer_count.update(singer_correct.item() / batch_size, batch_size)
+            phone_count.update(phone_correct.item() / np.sum(len_list), np.sum(len_list))
+            semitone_count.update(
+                semitone_correct.item() / np.sum(len_list), np.sum(len_list)
+            )
+
+            # break
+
+            # Print train_step_log info
+            if step % args.train_step_log == 0:
+                end = time.time()
+
+                # Display generated .wav files
+                if args.normalize and args.stats_file:
+                    output_spec, _ = sepc_normalizer.inverse(output_spec, length)
+                    mel, _ = mel_normalizer.inverse(mel, length)
+                    output_mel = output_mel_normalizer.inverse(output_mel, length)
+
+                if args.vocoder_category == "wavernn":
+                    # Kiritan’s output_mel is a tuple type and needs to be preprocessed
+                    if isinstance(output_mel, tuple):
+                        output_mel = output_mel[0]
+                    for i in range(output_mel.shape[0]):
+                        one_batch_output_mel = output_mel[i].unsqueeze(0)
+                        one_batch_mel = mel[i].unsqueeze(0)
+                        log_mel(
+                            step,
+                            one_batch_output_mel,
+                            one_batch_mel,
+                            att,
+                            length,
+                            log_save_dir,
+                            args,
+                            voc_model,
+                        )
+                else:
+                    log_figure(
+                        step, output_spec, spec_origin, att, length, log_save_dir, args
+                    )
+                
+                # Print Generator step-loss info
+                out_log = "step {}: total_loss {:.4f}; \nspec_loss {:.4f};".format(
+                    step, losses.avg, spec_losses.avg
+                )
+                if args.perceptual_loss > 0:
+                    out_log += "pe_loss {:.4f}; ".format(pe_losses.avg)
+                if args.n_mels > 0:
+                    out_log += "mel_loss {:.4f}; ".format(mel_losses.avg)
+                    if args.double_mel_loss:
+                        out_log += "dmel_loss {:.4f}; \n".format(double_mel_losses.avg)
+
+                # Print Predictor step-loss info
+                out_log = "step {}: predictor_loss {:.6f}, ".format(
+                    step, singer_losses.avg + phone_losses.avg + semitone_losses.avg
+                )
+                out_log += "\t singer_loss: {:.4f} ".format(singer_losses.avg)
+                out_log += "phone_loss: {:.4f} ".format(phone_losses.avg)
+                out_log += "semitone_loss: {:.4f} \n".format(semitone_losses.avg)
+
+                out_log += "\t singer_accuracy: {:.4f}% ".format(singer_count.avg * 100)
+                out_log += "phone_accuracy: {:.4f}% ".format(phone_count.avg * 100)
+                out_log += "semitone_accuracy: {:.4f}% ".format(semitone_count.avg * 100)
+
+                print("{} -- sum_time: {:.2f}s".format(out_log, (end - start)))
+
+    info = {
+        "loss": losses.avg, 
+
+        # generator loss
+        "spec_loss": spec_losses.avg,
+
+        # predictor loss
+        "singer_loss": singer_losses.avg,
+        "phone_loss": phone_losses.avg,
+        "semitone_loss": semitone_losses.avg,
+        "singer_accuracy": singer_count.avg,
+        "phone_accuracy": phone_count.avg,
+        "semitone_accuracy": semitone_count.avg,
+    }
+    generator_loss = spec_losses.avg
+    if args.perceptual_loss > 0:
+        info["pe_loss"] = pe_losses.avg
+        generator_loss += pe_losses.avg
+    if args.n_mels > 0:
+        info["mel_loss"] = mel_losses.avg
+        generator_loss += mel_losses.avg
+    info["generator_loss"] = generator_loss
+    info["predictor_loss"] = singer_losses.avg + phone_losses.avg + semitone_losses.avg
+
     return info
 
 
